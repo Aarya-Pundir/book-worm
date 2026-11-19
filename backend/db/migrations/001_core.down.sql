@@ -1,0 +1,10 @@
+DROP TABLE IF EXISTS app_config;
+DROP TABLE IF EXISTS order_lines;
+DROP TABLE IF EXISTS orders;
+DROP TABLE IF EXISTS book_authors;
+DROP TABLE IF EXISTS book_categories;
+DROP TABLE IF EXISTS books;
+DROP TABLE IF EXISTS publishers;
+DROP TABLE IF EXISTS authors;
+DROP TABLE IF EXISTS categories;
+DROP TABLE IF EXISTS members;

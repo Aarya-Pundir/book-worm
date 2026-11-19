@@ -1,0 +1,776 @@
+openapi: 3.1.0
+info:
+  title: Book Worm API
+  version: 0.1.0
+  description: >
+    Phases 1-7.5 contract (Member, Catalogue, Cart, Addresses, Checkout, Payment, Orders, Shipping, My Wishlist and My Writers).
+    Payment is a
+    TEMPORARY MOCK gateway and stays PARTIAL until the Admin approves a provider. Items marked "pending admin approval" in
+    plan.md may change.
+servers:
+  - url: http://127.0.0.1:4000/api
+tags:
+  - name: Health
+  - name: Member
+  - name: Catalogue
+  - name: Cart
+  - name: Addresses
+  - name: Checkout
+  - name: Payment
+  - name: Orders
+  - name: Admin
+  - name: Wishlist
+  - name: Writers
+
+paths:
+  /health:
+    get:
+      tags: [Health]
+      summary: Service health
+      responses:
+        "200":
+          description: OK
+
+  /openapi.yaml:
+    get:
+      tags: [Health]
+      summary: This API contract, served unchanged
+      responses:
+        "200":
+          description: The OpenAPI document (YAML)
+          content:
+            application/yaml:
+              schema: { type: string }
+
+  /members/register:
+    post:
+      tags: [Member]
+      summary: Register a new member
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegisterRequest"
+      responses:
+        "201":
+          description: Member created
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "409":
+          description: Email or mobile already registered
+
+  /members/login:
+    post:
+      tags: [Member]
+      summary: Sign in with email or mobile number and password; sets httpOnly session cookie
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: Signed in
+        "401":
+          description: Invalid credentials (generic message)
+        "429":
+          description: Too many attempts
+
+  /members/logout:
+    post:
+      tags: [Member]
+      summary: End the session
+      security: [{ cookieAuth: [] }]
+      responses:
+        "204":
+          description: Signed out
+
+  /members/me:
+    get:
+      tags: [Member]
+      summary: Current member profile
+      security: [{ cookieAuth: [] }]
+      responses:
+        "200":
+          description: Member profile
+        "401":
+          description: Not signed in
+
+  /categories:
+    get:
+      tags: [Catalogue]
+      summary: The 20 genres in display order (public)
+      responses:
+        "200":
+          description: Category list
+
+  /authors:
+    get:
+      tags: [Catalogue]
+      summary: Authors (public)
+      parameters:
+        - { name: q, in: query, schema: { type: string } }
+      responses:
+        "200":
+          description: Author list
+
+  /authors/{id}:
+    get:
+      tags: [Writers]
+      summary: "One writer (public, same visibility rules as the catalogue). Returns the name and the number of ACTIVE books. A writer with no active books is still returned with a count of 0. A signed-in member also gets `following`. The writer's books come from GET /books?author={id}"
+      security: [{}, { cookieAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer, minimum: 1 } }
+      responses:
+        "200":
+          description: "{ author: { id, name, bookCount, following } }. `following` is present only for a signed-in member"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WriterResponse" }
+        "404": { description: "Unknown writer (also for a non-numeric id)" }
+  /languages:
+    get:
+      tags: [Catalogue]
+      summary: Languages of active books, for the language filter (public)
+      responses:
+        "200":
+          description: Language list
+
+  /publishers:
+    get:
+      tags: [Catalogue]
+      summary: Publishers (public; Brand vs Publisher pending admin approval)
+      responses:
+        "200":
+          description: Publisher list
+
+  /books:
+    get:
+      tags: [Catalogue]
+      summary: Search, filter, sort and page books (public, server-side)
+      parameters:
+        - { name: q, in: query, description: Partial title or author match, schema: { type: string } }
+        - { name: category, in: query, description: Category slug, schema: { type: string } }
+        - { name: author, in: query, schema: { type: integer } }
+        - { name: publisher, in: query, schema: { type: integer } }
+        - { name: language, in: query, schema: { type: string } }
+        - { name: format, in: query, schema: { type: string, enum: [Paperback, Hardcover, eBook] } }
+        - { name: minPrice, in: query, schema: { type: number, minimum: 0 } }
+        - { name: maxPrice, in: query, schema: { type: number, minimum: 0 } }
+        - name: sort
+          in: query
+          schema: { type: string, enum: [relevance, price_asc, price_desc, newest, popularity], default: relevance }
+        - { name: page, in: query, schema: { type: integer, minimum: 1, default: 1 } }
+        - { name: pageSize, in: query, schema: { type: integer, minimum: 1, maximum: 50, default: 12 } }
+      responses:
+        "200":
+          description: Paged books
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BookPage"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+
+  /books/featured:
+    get:
+      tags: [Catalogue]
+      summary: Bestsellers This Month and New Launches (public)
+      parameters:
+        - { name: type, in: query, required: true, schema: { type: string, enum: [bestsellers, new] } }
+        - { name: limit, in: query, schema: { type: integer, default: 6 } }
+      responses:
+        "200":
+          description: Book list
+
+  /books/recommended:
+    get:
+      tags: [Catalogue]
+      summary: Recommended for You. Uses the caller's own order history if signed in and available; otherwise popular books with personalised=false.
+      responses:
+        "200":
+          description: Book list with personalised flag
+
+  /books/{id}:
+    get:
+      tags: [Catalogue]
+      summary: Book details with related books (public)
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer } }
+      responses:
+        "200":
+          description: Book
+        "404":
+          description: Book not found
+
+  /cart:
+    get:
+      tags: [Cart]
+      summary: Current cart, recomputed from live prices and stock (guest cookie or member session)
+      responses:
+        "200":
+          description: Cart summary
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CartResponse" }
+
+  /cart/items:
+    post:
+      tags: [Cart]
+      summary: Add copies of a book. The first guest add sets the httpOnly `cart_token` cookie
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AddCartItemRequest" }
+      responses:
+        "200":
+          description: Updated cart. `message` is present when the quantity was limited to stock
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CartResponse" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "404":
+          description: Book is inactive or does not exist
+        "409":
+          description: Book is out of stock (code OUT_OF_STOCK)
+
+  /cart/items/{bookId}:
+    patch:
+      tags: [Cart]
+      summary: Set the quantity of a line (limited to stock)
+      parameters:
+        - { name: bookId, in: path, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UpdateCartItemRequest" }
+      responses:
+        "200":
+          description: Updated cart
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CartResponse" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "404":
+          description: Book is not in the cart
+        "409":
+          description: Book is no longer available (remove it)
+    delete:
+      tags: [Cart]
+      summary: Remove a line (removing a line that is already gone is not an error)
+      parameters:
+        - { name: bookId, in: path, required: true, schema: { type: integer } }
+      responses:
+        "200":
+          description: Updated cart
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CartResponse" }
+  /addresses:
+    get:
+      tags: [Addresses]
+      summary: The signed-in member's saved addresses (never another member's)
+      security: [{ cookieAuth: [] }]
+      responses:
+        "200": { description: "Addresses, default first" }
+        "401": { description: Sign-in required }
+    post:
+      tags: [Addresses]
+      summary: Save an address. The first one becomes the default. PIN is 6 digits, not starting with 0
+      security: [{ cookieAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AddressRequest" }
+      responses:
+        "201": { description: Address saved }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { description: Sign-in required }
+
+  /addresses/{id}:
+    put:
+      tags: [Addresses]
+      summary: Edit one of the member's own addresses
+      security: [{ cookieAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AddressRequest" }
+      responses:
+        "200": { description: Address updated }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "404": { description: Not found (or not the member's address) }
+    delete:
+      tags: [Addresses]
+      summary: Delete one of the member's own addresses (past orders keep their own copy)
+      security: [{ cookieAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer } }
+      responses:
+        "204": { description: Deleted }
+        "404": { description: Not found (or not the member's address) }
+
+  /checkout/review:
+    post:
+      tags: [Checkout]
+      summary: "Read-only summary computed from live data: lines, delivery estimate (labelled estimate), shipping, coupon, gift points, total, allowed payment methods. Creates nothing"
+      security: [{ cookieAuth: [] }]
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CheckoutRequest" }
+      responses:
+        "200": { description: "Review. `blockers` lists reasons the order cannot be placed (empty cart, no address, PIN not served)" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { description: Sign-in required }
+
+  /checkout/order:
+    post:
+      tags: [Checkout]
+      summary: "Create the member's order as Pending Payment, or refresh the one they already have (one per member). Holds no stock yet"
+      security: [{ cookieAuth: [] }]
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CheckoutRequest" }
+      responses:
+        "201": { description: Pending Payment order with lines (purchase prices kept) }
+        "409": { description: "EMPTY_CART, UNAVAILABLE_ITEMS or PAYMENT_IN_PROGRESS" }
+        "422": { description: "ADDRESS_REQUIRED or UNSERVICEABLE_PIN" }
+
+  /orders:
+    get:
+      tags: [Orders]
+      summary: "The member's own orders, newest first, with status, date, items and total. Timers are applied when this is called. Never lists Pending Payment orders"
+      security: [{ cookieAuth: [] }]
+      responses:
+        "200": { description: "{ items: [{ orderNumber, status, placedAt, total, items }] }" }
+        "401": { description: Sign-in required }
+
+  /orders/{orderNumber}:
+    get:
+      tags: [Orders]
+      summary: "One of the member's own orders: items, address, payment summary, refunds, shipment and its history, return shipment, estimated or confirmed delivery date, and the actions available. Another member's order number is 404"
+      security: [{ cookieAuth: [] }]
+      parameters:
+        - { name: orderNumber, in: path, required: true, schema: { type: string } }
+      responses:
+        "200": { description: "{ order }. `estimatedDelivery` is set until dispatch, `confirmedDelivery` only after dispatch. `actions` has cancel, return and buyAgain, each with allowed and a reason when declined" }
+        "401": { description: Sign-in required }
+        "404": { description: Not found }
+
+  /orders/{orderNumber}/cancel:
+    post:
+      tags: [Orders]
+      summary: "Cancel within the configured window (default 48 hours) and before dispatch. Releases stock, restores coupon use and gift points, and starts a refund"
+      security: [{ cookieAuth: [] }]
+      parameters:
+        - { name: orderNumber, in: path, required: true, schema: { type: string } }
+      requestBody:
+        content:
+          application/json:
+            schema: { type: object, properties: { reason: { type: string, maxLength: 200 } } }
+      responses:
+        "200": { description: "{ order } with status Cancelled and the refund status" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "404": { description: Not found (or not the member's) }
+        "409": { description: "CANCEL_NOT_ALLOWED with a clear reason (window passed, already dispatched, already cancelled, not confirmed)" }
+
+  /orders/{orderNumber}/return:
+    post:
+      tags: [Orders]
+      summary: "Return a delivered order with physical books within the configured window (default 7 days). Creates a return shipment. The refund completes after the books are received"
+      security: [{ cookieAuth: [] }]
+      parameters:
+        - { name: orderNumber, in: path, required: true, schema: { type: string } }
+      responses:
+        "200": { description: "{ order } with status Return Requested and the return shipment" }
+        "404": { description: Not found (or not the member's) }
+        "409": { description: "RETURN_NOT_ALLOWED with a clear reason (not delivered, eBook only, window passed, already requested)" }
+
+  /orders/{orderNumber}/buy-again:
+    post:
+      tags: [Orders]
+      summary: "Add the books of a past order to the cart at today's price and availability. Books that cannot be added are listed"
+      security: [{ cookieAuth: [] }]
+      parameters:
+        - { name: orderNumber, in: path, required: true, schema: { type: string } }
+      responses:
+        "200": { description: "{ cart, added, unavailable, notes, message }. Quantities are limited to stock" }
+        "404": { description: Not found (or not the member's) }
+
+  /admin/orders/{orderNumber}/shipment:
+    post:
+      tags: [Admin]
+      summary: "Admin override of the shipment status. Forward only, never dispatches a cancelled order, recorded in the shipment history. Admin role details are PENDING ADMIN APPROVAL"
+      security: [{ cookieAuth: [] }]
+      parameters:
+        - { name: orderNumber, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [status], properties: { status: { type: string, enum: [Dispatched, In Transit, Delivered] } } }
+      responses:
+        "200": { description: Updated shipment }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { description: Sign-in required }
+        "403": { description: Guests and members are denied }
+        "404": { description: Not found }
+        "409": { description: "SHIPMENT_CLOSED, INVALID_TRANSITION or NO_SHIPMENT" }
+
+  /admin/orders/{orderNumber}/return:
+    post:
+      tags: [Admin]
+      summary: "Admin override of the return shipment status (forward only). Receiving the books completes the refund"
+      security: [{ cookieAuth: [] }]
+      parameters:
+        - { name: orderNumber, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [status], properties: { status: { type: string, enum: [Picked Up, Received] } } }
+      responses:
+        "200": { description: Updated return shipment }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "403": { description: Guests and members are denied }
+        "404": { description: Not found }
+        "409": { description: "INVALID_TRANSITION or NO_RETURN" }
+
+  /gift-points:
+    get:
+      tags: [Checkout]
+      summary: Gift point balance and auditable ledger (balance never negative)
+      security: [{ cookieAuth: [] }]
+      responses:
+        "200": { description: Balance and history }
+
+  /payments:
+    post:
+      tags: [Payment]
+      summary: "Pay for a Pending Payment order (TEMPORARY MOCK gateway). Idempotent. Never send card, UPI or bank details: the server refuses them with 400"
+      security: [{ cookieAuth: [] }]
+      parameters:
+        - { name: Idempotency-Key, in: header, required: true, schema: { type: string, pattern: "^[A-Za-z0-9_-]{16,80}$" } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PaymentRequest" }
+      responses:
+        "200": { description: "Order Confirmed. `replayed` is true when the same key was already settled" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "402": { description: "PAYMENT_FAILED. The order stays Pending Payment, stock, coupon and points are released, retry is allowed" }
+        "404": { description: Order not found (or not the member's) }
+        "409": { description: "PAYMENT_IN_PROGRESS, ITEM_UNAVAILABLE, PRICE_CHANGED, COUPON_INVALID, INSUFFICIENT_POINTS, IDEMPOTENCY_KEY_REUSED or ORDER_NOT_PAYABLE" }
+        "422": { description: "METHOD_UNAVAILABLE (for example Cash on Delivery for eBooks or above the maximum)" }
+
+  /payments/{orderNumber}:
+    get:
+      tags: [Payment]
+      summary: The stored payment confirmation for the member's own order
+      security: [{ cookieAuth: [] }]
+      parameters:
+        - { name: orderNumber, in: path, required: true, schema: { type: string } }
+      responses:
+        "200": { description: Payment method, amount, status and reference }
+        "404": { description: Not found }
+  /wishlist:
+    get:
+      tags: [Wishlist]
+      summary: "The signed-in member's wishlist, newest first. Active books show cover, title, authors, format, current price and availability. A book that became inactive stays listed with ONLY bookId, title, coverUrl, available=false and unavailableReason; nothing else about it is returned"
+      security: [{ cookieAuth: [] }]
+      responses:
+        "200":
+          description: "{ items, count, maxItems }"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WishlistResponse" }
+        "401": { description: Sign-in required }
+
+  /wishlist/items:
+    post:
+      tags: [Wishlist]
+      summary: "Add an ACTIVE book. Idempotent (a second add keeps one entry). An active out-of-stock book is accepted and shown as unavailable. An unknown or inactive book is rejected and nothing is stored"
+      security: [{ cookieAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AddWishlistItemRequest" }
+      responses:
+        "200": { description: "Already on the wishlist. { item, count }" }
+        "201": { description: "Added. { item, count }" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { description: Sign-in required }
+        "404": { description: "Book not found (unknown or inactive, same message for both)" }
+        "409": { description: "WISHLIST_FULL. The configured maximum (config key wishlist_max_items, default 200) is reached" }
+
+  /wishlist/items/{bookId}:
+    delete:
+      tags: [Wishlist]
+      summary: "Remove a book from the member's own wishlist. Idempotent: removing a book that is not on the list is also 204. Only the signed-in member's row can ever be touched"
+      security: [{ cookieAuth: [] }]
+      parameters:
+        - { name: bookId, in: path, required: true, schema: { type: integer, minimum: 1 } }
+      responses:
+        "204": { description: Removed (or was not on the list) }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { description: Sign-in required }
+
+  /wishlist/cart:
+    post:
+      tags: [Wishlist]
+      summary: "Add one, several or (when bookIds is omitted) all AVAILABLE wishlist books to the cart using the normal cart rules (current price, stock limit). Unavailable books are skipped with a reason and never fail the request. Books stay on the wishlist"
+      security: [{ cookieAuth: [] }]
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/WishlistToCartRequest" }
+      responses:
+        "200":
+          description: "{ added, skipped, cart, message }"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WishlistToCartResponse" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { description: Sign-in required }
+
+  /writers:
+    get:
+      tags: [Writers]
+      summary: "The writers the signed-in member follows, newest follow first, each with the number of ACTIVE books. A writer with no active books stays listed with bookCount 0"
+      security: [{ cookieAuth: [] }]
+      responses:
+        "200":
+          description: "{ items: [{ id, name, bookCount, followedAt }] }"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FollowedWritersResponse" }
+        "401": { description: Sign-in required }
+
+  /writers/{authorId}/follow:
+    post:
+      tags: [Writers]
+      summary: "Follow an existing writer (any existing writer, including one with no active books). Idempotent. Writers cannot be created or edited through the API"
+      security: [{ cookieAuth: [] }]
+      parameters:
+        - { name: authorId, in: path, required: true, schema: { type: integer, minimum: 1 } }
+      responses:
+        "200": { description: "Already followed. { author: { id, name, bookCount, following: true } }" }
+        "201": { description: "Now followed. { author: { id, name, bookCount, following: true } }" }
+        "401": { description: Sign-in required }
+        "404": { description: Unknown writer }
+    delete:
+      tags: [Writers]
+      summary: "Unfollow a writer. Idempotent: 204 also when the writer was not followed. An unknown writer is 404"
+      security: [{ cookieAuth: [] }]
+      parameters:
+        - { name: authorId, in: path, required: true, schema: { type: integer, minimum: 1 } }
+      responses:
+        "204": { description: Unfollowed (or was not followed) }
+        "401": { description: Sign-in required }
+        "404": { description: Unknown writer }
+components:
+  securitySchemes:
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: session
+  responses:
+    ValidationError:
+      description: Invalid input
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+  schemas:
+    Error:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            code: { type: string }
+            message: { type: string }
+            fields: { type: object, additionalProperties: { type: string } }
+    RegisterRequest:
+      type: object
+      required: [name, email, mobile, password, confirmPassword]
+      properties:
+        name: { type: string }
+        email: { type: string, format: email }
+        mobile: { type: string }
+        password: { type: string, format: password }
+        confirmPassword: { type: string, format: password }
+    LoginRequest:
+      type: object
+      required: [identifier, password]
+      properties:
+        identifier: { type: string, description: Email or mobile number }
+        password: { type: string, format: password }
+    Book:
+      type: object
+      properties:
+        id: { type: integer }
+        title: { type: string }
+        authors: { type: array, items: { type: string } }
+        publisher: { type: string }
+        categories: { type: array, items: { type: string } }
+        shortDescription: { type: string }
+        coverUrl: { type: string }
+        price: { type: number }
+        format: { type: string }
+        language: { type: string }
+        inStock: { type: boolean }
+        estimatedDelivery: { type: [string, "null"], description: Estimated, not confirmed }
+    BookPage:
+      type: object
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/Book" } }
+        page: { type: integer }
+        pageSize: { type: integer }
+        total: { type: integer }
+    AddCartItemRequest:
+      type: object
+      required: [bookId]
+      properties:
+        bookId: { type: integer, minimum: 1 }
+        quantity: { type: integer, minimum: 1, maximum: 99, default: 1 }
+    UpdateCartItemRequest:
+      type: object
+      required: [quantity]
+      properties:
+        quantity: { type: integer, minimum: 1, maximum: 99 }
+    CartLine:
+      type: object
+      properties:
+        bookId: { type: integer }
+        title: { type: string }
+        coverUrl: { type: string }
+        format: { type: string }
+        authors: { type: array, items: { type: string } }
+        unitPrice: { type: number, description: "Current catalogue price, never taken from the client" }
+        previousPrice: { type: [number, "null"], description: "Price when added, set only if it changed" }
+        priceChanged: { type: boolean }
+        quantity: { type: integer, description: "Limited to available stock, 0 if unavailable" }
+        maxQuantity: { type: integer }
+        available: { type: boolean }
+        lineTotal: { type: number }
+        warnings: { type: array, items: { type: string } }
+    Cart:
+      type: object
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/CartLine" } }
+        itemCount: { type: integer }
+        subtotal: { type: number }
+        estimatedDelivery: { type: [string, "null"], description: "Estimate only, null if the cart has no physical book" }
+        hasWarnings: { type: boolean }
+    CartResponse:
+      type: object
+      properties:
+        cart: { $ref: "#/components/schemas/Cart" }
+        message: { type: string, description: Present when a quantity was limited to stock }
+    AddressRequest:
+      type: object
+      required: [recipient, phone, line1, city, state, pinCode]
+      properties:
+        recipient: { type: string }
+        phone: { type: string }
+        line1: { type: string }
+        line2: { type: string }
+        city: { type: string }
+        state: { type: string }
+        pinCode: { type: string, pattern: "^[1-9][0-9]{5}$" }
+        isDefault: { type: boolean }
+    CheckoutRequest:
+      type: object
+      properties:
+        addressId: { type: integer }
+        couponCode: { type: string }
+        redeemPoints: { type: integer, minimum: 0 }
+    PaymentRequest:
+      type: object
+      additionalProperties: false
+      required: [orderNumber, method]
+      properties:
+        orderNumber: { type: string }
+        method: { type: string, enum: [CARD, UPI, NET_BANKING, COD] }
+        acceptCodTerms: { type: boolean, description: Required for COD }
+        simulate: { type: string, enum: [decline, error], description: Test mode only, ignored in production }
+    WishlistItem:
+      type: object
+      description: "Available or out-of-stock book: every field. Inactive book: ONLY bookId, title, coverUrl, available (false) and unavailableReason"
+      required: [bookId, title, coverUrl, available]
+      properties:
+        bookId: { type: integer }
+        title: { type: string }
+        coverUrl: { type: string }
+        available: { type: boolean, description: "false when out of stock or no longer available" }
+        unavailableReason: { type: [string, "null"], enum: [Out of stock, No longer available, null], description: "null when available" }
+        format: { type: string, description: "Not returned for an inactive book" }
+        price: { type: number, description: "Current catalogue price. Not returned for an inactive book" }
+        authors:
+          type: array
+          description: "Not returned for an inactive book"
+          items: { type: object, properties: { id: { type: integer }, name: { type: string } } }
+    WishlistResponse:
+      type: object
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/WishlistItem" } }
+        count: { type: integer }
+        maxItems: { type: integer }
+    AddWishlistItemRequest:
+      type: object
+      additionalProperties: false
+      required: [bookId]
+      properties:
+        bookId: { type: integer, minimum: 1 }
+    WishlistToCartRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        bookIds: { type: array, maxItems: 200, items: { type: integer, minimum: 1 }, description: "Omit to use every available wishlist book" }
+    WishlistToCartResponse:
+      type: object
+      properties:
+        added:
+          type: array
+          items: { type: object, properties: { bookId: { type: integer }, title: { type: string }, quantity: { type: integer }, note: { type: string, description: "Present when the quantity was limited by stock" } } }
+        skipped:
+          type: array
+          items: { type: object, properties: { bookId: { type: integer }, title: { type: string }, reason: { type: string } } }
+        cart: { $ref: "#/components/schemas/Cart" }
+        message: { type: [string, "null"] }
+    Writer:
+      type: object
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        bookCount: { type: integer, description: "Number of ACTIVE books, 0 when none" }
+        following: { type: boolean, description: "Only for a signed-in member" }
+    WriterResponse:
+      type: object
+      properties:
+        author: { $ref: "#/components/schemas/Writer" }
+    FollowedWritersResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: integer }
+              name: { type: string }
+              bookCount: { type: integer }
+              followedAt: { type: string, format: date-time }
